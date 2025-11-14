@@ -4,6 +4,7 @@ import uuid
 from typing import Literal
 
 from src.api.schemas import WorkflowInput, WorkflowResponse
+from src.core.config import settings
 from src.orchestration.orchestrator import Orchestrator
 from src.core.logging import get_logger
 
@@ -17,7 +18,7 @@ class HealthResponse(BaseModel):
 
 app = FastAPI(
     title="AI Workflow Orchestrator",
-    version="0.1.0",
+    version=settings.API_VERSION,
     description="Backend service for LLM-driven workflow planning and execution.",
 )
 
