@@ -1,12 +1,21 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 import uuid
 from typing import Literal
 
-from src.api.schemas import WorkflowInput, WorkflowResponse
-from src.core.config import settings
+from sqlalchemy.orm import Session
+
+from src.api.schemas import (
+    WorkflowInput,
+    WorkflowResponse,
+    WorkflowStatusResponse,
+    TaskResult,
+)
 from src.orchestration.orchestrator import Orchestrator
 from src.core.logging import get_logger
+from src.core.config import settings
+from src.core.db import get_db
+from src.repos.workflow_repo import get_workflow_by_id
 
 
 class HealthResponse(BaseModel):
@@ -37,7 +46,7 @@ def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         service="ai-workflow-orchestrator",
-        version="0.1.0",
+        version=settings.API_VERSION,
         request_id=request_id,
     )
 
@@ -46,8 +55,10 @@ def health_check() -> HealthResponse:
 def run_workflow(request: WorkflowInput) -> WorkflowResponse:
     """
     Create and execute a workflow for the given objective + inputs.
-    For now this uses a dummy orchestrator implementation that returns
-    a fake completed workflow.
+    Currently:
+      - Creates a DB-backed workflow + single summarize_text task
+      - Executes the workflow by routing tasks to tools
+      - Returns structured results.
     """
     request_id = str(uuid.uuid4())
     logger.info(
@@ -73,3 +84,46 @@ def run_workflow(request: WorkflowInput) -> WorkflowResponse:
     )
 
     return result
+
+
+@app.get("/workflows/{workflow_id}", response_model=WorkflowStatusResponse)
+def get_workflow_status(
+    workflow_id: str,
+    db: Session = Depends(get_db),
+) -> WorkflowStatusResponse:
+    """
+    Fetch the current status of a workflow and all its tasks.
+    This is essential for monitoring and UI/debugging.
+    """
+    wf = get_workflow_by_id(db, workflow_id)
+    if wf is None:
+        logger.warning(
+            "Workflow not found on status fetch",
+            extra={"workflow_id": workflow_id},
+        )
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    tasks = [
+        TaskResult(
+            task_id=t.id,
+            status=t.status,
+            output=t.output,
+            error=t.error,
+        )
+        for t in wf.tasks
+    ]
+
+    logger.info(
+        "Returning workflow status",
+        extra={
+            "workflow_id": wf.id,
+            "status": wf.status,
+            "task_count": len(tasks),
+        },
+    )
+
+    return WorkflowStatusResponse(
+        workflow_id=wf.id,
+        status=wf.status,
+        tasks=tasks,
+    )

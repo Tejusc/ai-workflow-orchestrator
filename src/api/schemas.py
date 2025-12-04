@@ -19,3 +19,8 @@ class WorkflowResponse(BaseModel):
     status: str
     results: List[TaskResult] = []
 
+class WorkflowStatusResponse(BaseModel):
+    workflow_id: str
+    status: str
+    tasks: List[TaskResult]
+
