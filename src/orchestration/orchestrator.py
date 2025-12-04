@@ -1,6 +1,3 @@
-from typing import List
-from uuid import uuid4
-
 from sqlalchemy.orm import Session
 
 from src.api.schemas import WorkflowInput, WorkflowResponse, TaskResult
@@ -23,7 +20,10 @@ class Orchestrator:
     def plan_workflow(self, request: WorkflowInput) -> str:
         """
         Create a workflow + initial task in the database.
-        For now, we create a single 'echo' task that exercises the tool registry.
+
+        For now, we create a single 'summarize_text' task that uses the LLM-backed
+        summarize_text_tool. We derive the text from the inputs or fall back
+        to the objective.
         """
         db = self._get_db()
         try:
@@ -34,11 +34,18 @@ class Orchestrator:
             db.add(workflow)
             db.flush()  # get workflow.id without full commit yet
 
+            # Prefer explicit text from inputs, fallback to objective.
+            text = ""
+            if isinstance(request.inputs, dict):
+                text = str(request.inputs.get("text", "")).strip()
+            if not text:
+                text = request.objective
+
             initial_task = Task(
                 workflow_id=workflow.id,
-                type="echo",  # tool name
+                type="summarize_text",  # tool name
                 status="pending",
-                input={"inputs": request.inputs},
+                input={"text": text},
             )
             db.add(initial_task)
 

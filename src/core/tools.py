@@ -1,12 +1,15 @@
 from typing import Any, Dict, Callable
 
 from src.core.logging import get_logger
+from src.core.llm_client import LLMClient
 
 logger = get_logger(__name__)
 
 ToolPayload = Dict[str, Any]
 ToolResult = Dict[str, Any]
 ToolFunc = Callable[[ToolPayload], ToolResult]
+
+llm_client = LLMClient()
 
 
 def echo_tool(payload: ToolPayload) -> ToolResult:
@@ -25,9 +28,32 @@ def uppercase_tool(payload: ToolPayload) -> ToolResult:
     return {"original": text, "uppercased": text.upper()}
 
 
+def summarize_text_tool(payload: ToolPayload) -> ToolResult:
+    """
+    Summarizes a block of text using the LLM client.
+    Expected payload:
+      { "text": "<big text>" }
+    """
+    text = payload.get("text", "")
+    if not text:
+        raise ValueError("summarize_text_tool requires 'text' field.")
+
+    messages = [
+        {"role": "system", "content": "You are a concise summarizer."},
+        {
+            "role": "user",
+            "content": f"Summarize the following text in a few sentences:\n\n{text}",
+        },
+    ]
+
+    summary = llm_client.chat(messages)
+    return {"summary": summary}
+
+
 TOOL_REGISTRY: Dict[str, ToolFunc] = {
     "echo": echo_tool,
     "uppercase": uppercase_tool,
+    "summarize_text": summarize_text_tool,
 }
 
 
