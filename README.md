@@ -1,59 +1,125 @@
 # AI Workflow Orchestrator
 
-Backend service that uses LLMs and tools to break down a high-level objective into smaller tasks, route them to the right tools (APIs, retrieval, etc.), and return structured results.
+Backend service that uses LLMs and tools to turn a high-level objective into a workflow of tasks, execute them, and return structured results.  
 
-## Overview
+Think of it as a **mini AI control plane**:
+- API in → workflow planned → tasks persisted → tools + LLM called → results stored + exposed via API.
 
-The system lets a client send an objective like:
+---
 
-> "Read these meeting notes, extract action items, and create Jira tickets."
+## High-Level Overview
 
-The orchestrator:
-1. Plans a workflow (tasks + dependencies).
-2. Executes tasks using LLMs and tools.
-3. Stores workflow state and results.
-4. Exposes APIs to run and inspect workflows.
+### What it does (today)
 
-## Tech Stack (v1)
+- Exposes an HTTP API:
+  - `POST /workflows/run`  
+    - Create + execute a workflow for a given objective and inputs.
+  - `GET /workflows/{workflow_id}`  
+    - Fetch current status and results for a workflow.
 
-- Language: Python
-- API: FastAPI
-- DB: PostgreSQL (with pgvector later)
-- Vector Store: pgvector (or Qdrant in v2)
-- LLM: OpenAI-compatible API (configurable)
+- Persists:
+  - **Workflows** (objective, status, timestamps)
+  - **Tasks** (type, input, output, error, status)
 
-## High-Level Components
+- Executes tasks by:
+  - Routing to a **tool registry**
+  - Including an **LLM-backed summarization tool** (`summarize_text`)
 
-- `api/` – FastAPI endpoints
-- `orchestration/` – workflow planning and execution
-- `embeddings/` – embeddings client + utilities
-- `retrieval/` – document and vector search
-- `core/` – shared utilities (logging, config, db)
-- `models/` – ORM / Pydantic models
-- `tests/` – automated tests
-- `docs/` – diagrams and architecture notes
+- Uses:
+  - **Postgres** (via Docker) for persistence
+  - **FastAPI** for the HTTP layer
+  - **SQLAlchemy** for ORM
+  - **OpenAI Chat Completions API** (configurable via env) for LLM calls
+  - Structured logging for observability
 
-## Roadmap (v1)
+---
 
-- [ ] Basic FastAPI app with `/health`
-- [ ] `POST /workflows/run` endpoint (dummy in-memory implementation)
-- [ ] Orchestrator skeleton (`plan_workflow`, `execute_workflow`)
-- [ ] PostgreSQL integration (SQLAlchemy models)
-- [ ] Simple tool registry and one example tool
-- [ ] Embeddings + retrieval scaffold
-- [ ] Structured logging for workflows and tasks
-- [ ] Minimal integration tests
+## Architecture
 
-## Running Locally (to be updated)
+### Components
 
-```bash
-# create virtual env
-python -m venv .venv
-source .venv/bin/activate  # on macOS/Linux
+- `src/api/main.py`
+  - FastAPI app
+  - `/health`, `/workflows/run`, `/workflows/{id}` endpoints
 
-# install deps
-pip install -r requirements.txt
+- `src/api/schemas.py`
+  - Pydantic models:
+    - `WorkflowInput`
+    - `TaskResult`
+    - `WorkflowResponse`
+    - `WorkflowStatusResponse`
 
-# run api
-uvicorn src.api.main:app --reload
+- `src/core/config.py`
+  - Central configuration using `pydantic-settings`
+  - Reads `.env` for:
+    - `DATABASE_URL`
+    - `LLM_API_BASE`
+    - `LLM_API_KEY`
+    - `LLM_MODEL`
 
+- `src/core/db.py`
+  - SQLAlchemy engine, session, `Base`, and `get_db` dependency
+
+- `src/models/workflow.py`
+  - `Workflow` + `Task` ORM models
+
+- `src/core/logging.py`
+  - Structured logger used across API + orchestrator + tools
+
+- `src/core/tools.py`
+  - Tool registry:
+    - `echo`
+    - `uppercase`
+    - `summarize_text` (LLM-backed)
+
+- `src/core/llm_client.py`
+  - OpenAI-compatible LLM client
+  - Wraps `/v1/chat/completions`
+
+- `src/orchestration/orchestrator.py`
+  - Orchestrator that:
+    - Creates workflows + tasks in DB (`plan_workflow`)
+    - Loads tasks, routes to tools, updates results (`execute_workflow`)
+
+- `src/repos/workflow_repo.py`
+  - Simple data access for `Workflow` by id
+
+---
+
+## Data Model
+
+### `workflows` table
+
+- `id` (string, UUID)
+- `objective` (text)
+- `status` (string: `planned`, `completed`, `failed`, etc.)
+- `created_at`
+- `updated_at`
+
+### `tasks` table
+
+- `id` (string, UUID)
+- `workflow_id` (FK → `workflows.id`)
+- `type` (tool name: e.g. `summarize_text`)
+- `status` (`pending`, `completed`, `failed`)
+- `input` (JSON)
+- `output` (JSON)
+- `error` (text)
+- `created_at`
+- `updated_at`
+
+---
+
+## Request Flow
+
+### 1. `POST /workflows/run`
+
+Input:
+
+```json
+{
+  "objective": "Summarize this text",
+  "inputs": {
+    "text": "Some longer text to summarize..."
+  }
+}
